@@ -1,0 +1,31 @@
+# Dados fiscais — NF-e (não versionar)
+*.xml
+
+# PDFs gerados
+DANFE_PDF/
+*.pdf
+
+# Logs de execução
+log_*.txt
+*.log
+
+# Scripts auxiliares de debug (gerados durante o desenvolvimento)
+dump_*.py
+teste_*.py
+check_*.py
+inspecionar_*.py
+executar_dump.bat
+
+# Backups criados pelo patcher
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+
+# Editor
+.vscode/
+*.swp

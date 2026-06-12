@@ -1,25 +1,65 @@
 """
-patch_danfe_lib.py  —  v1.0.0
+patch_danfe_lib.py  —  v1.2.1
 ==============================
 Corrige a biblioteca brazilfiscalreport (v0.7.8) com as seguintes alteracoes:
 
-1. danfe.py — altura de DADOS ADICIONAIS: 20mm -> 90mm (evita overflow de texto)
+1. danfe.py — altura de DADOS ADICIONAIS dinamica: ajustada ao texto (min 20mm,
+              max 90mm). O bloco fica alinhado ao rodape e a tabela de produtos
+              preenche todo o espaco restante. Tipografia do campo INFORMACOES
+              COMPLEMENTARES igual ao modelo da empresa: conteudo Times regular
+              8pt, rotulo 6pt (demais campos continuam em negrito).
 2. danfe.py — fonte da tabela de produtos: fixa em FONT_SIZE_DESC (5pt)
 3. danfe.py — valores monetarios dos produtos em negrito
 4. danfe.py — FATURA/DUPLICATA: titulo singular + formato compacto label+valor inline
 5. danfe.py — tabela de produtos: bordas manuais (colunas + borda externa, sem linhas
               horizontais internas entre itens; colunas estendem ate DADOS ADICIONAIS)
-6. danfe_basic_field.py — conteudo dos campos em negrito
+6. danfe_basic_field.py — conteudo dos campos em negrito; campo INFORMACOES
+              COMPLEMENTARES em Times regular 8pt com rotulo 6pt (modelo da empresa)
 
 Uso:
     python patch_danfe_lib.py
 """
 
-__version__ = "1.0.0"
+__version__ = "1.2.1"
 import sys
 import os
 import re
+import io
 import importlib.util
+
+
+# Espelha tudo o que aparece no terminal tambem para log_execucao.txt
+class _Tee(io.TextIOBase):
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, s):
+        for st in self._streams:
+            try:
+                st.write(s)
+                st.flush()
+            except Exception:
+                pass
+        return len(s)
+
+    def flush(self):
+        for st in self._streams:
+            try:
+                st.flush()
+            except Exception:
+                pass
+
+
+try:
+    _log = open(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "log_execucao.txt"),
+        "a",
+        encoding="utf-8",
+    )
+    sys.stdout = _Tee(sys.stdout, _log)
+    sys.stderr = _Tee(sys.stderr, _log)
+except Exception:
+    pass
 
 
 def encontrar_base():
@@ -97,6 +137,40 @@ def limpar_cache(base_dir):
 
 
 # ---------------------------------------------------------------------------
+# DADOS ADICIONAIS: altura dinamica ajustada ao texto, alinhada ao rodape.
+# A tabela de produtos preenche automaticamente o espaco restante, pois a
+# biblioteca calcula sua altura como (pagina - blocos antes - blocos depois).
+# ---------------------------------------------------------------------------
+ALTURA_OLD_TMPL = (
+    "        height = (\n"
+    "            continuation_height - HEIGHT_FONT_BLOCK_DESC "
+    "if continuation_height else {valor}\n"
+    "        )"
+)
+
+ALTURA_NEW = (
+    "        if continuation_height:\n"
+    "            height = continuation_height - HEIGHT_FONT_BLOCK_DESC\n"
+    "        else:\n"
+    "            # Altura dinamica: ajustada ao numero de linhas do texto\n"
+    "            from fpdf.enums import MethodReturnValue as _MRV\n"
+    "\n"
+    "            from .danfe_conf import DEFAULT_HEIGHT_FONT_CONTENT as _DHC\n"
+    "\n"
+    "            # Mede com a tipografia do modelo: Times regular 8pt\n"
+    "            self.set_font(self.default_font, \"\", 8)\n"
+    "            _lines_ad = self.multi_cell(\n"
+    "                w=self.edw - 70,\n"
+    "                h=_DHC,\n"
+    "                text=additional_data or \"\",\n"
+    "                dry_run=True,\n"
+    "                output=_MRV.LINES,\n"
+    "            )\n"
+    "            height = min(90.0, max(20.0, len(_lines_ad) * _DHC + 6))"
+)
+
+
+# ---------------------------------------------------------------------------
 # Novo formato das duplicatas: label + valor na mesma linha
 # ---------------------------------------------------------------------------
 # Novo formato: label + valor na mesma linha, borda externa unica por duplicata
@@ -165,17 +239,54 @@ def main():
     # Patches simples (substituicao exata)
     # ------------------------------------------------------------------
     patches_danfe = [
-        # Patch 1a: altura DADOS ADICIONAIS (original 20mm)
+        # Patch 1: altura DADOS ADICIONAIS dinamica (a partir de 20, 65 ou 90mm fixos)
         (
-            "continuation_height - HEIGHT_FONT_BLOCK_DESC if continuation_height else 20",
-            "continuation_height - HEIGHT_FONT_BLOCK_DESC if continuation_height else 90",
-            "Altura DADOS ADICIONAIS 20->90mm",
+            ALTURA_OLD_TMPL.format(valor=20),
+            ALTURA_NEW,
+            "Altura DADOS ADICIONAIS dinamica (era 20mm)",
         ),
-        # Patch 1b: altura DADOS ADICIONAIS (caso ja aplicado com 65mm)
         (
-            "continuation_height - HEIGHT_FONT_BLOCK_DESC if continuation_height else 65",
-            "continuation_height - HEIGHT_FONT_BLOCK_DESC if continuation_height else 90",
-            "Altura DADOS ADICIONAIS 65->90mm",
+            ALTURA_OLD_TMPL.format(valor=65),
+            ALTURA_NEW,
+            "Altura DADOS ADICIONAIS dinamica (era 65mm)",
+        ),
+        (
+            ALTURA_OLD_TMPL.format(valor=90),
+            ALTURA_NEW,
+            "Altura DADOS ADICIONAIS dinamica (era 90mm)",
+        ),
+        # Patch 1-mig: migra medicao da altura (v1.1.0) p/ Times regular 8pt
+        (
+            "            self.set_font(\n"
+            "                self.default_font, \"B\", self.get_font_size(\"FONT_SIZE_CONT\", True)\n"
+            "            )\n"
+            "            _lines_ad = self.multi_cell(\n",
+            "            # Mede com a tipografia do modelo: Times regular 8pt\n"
+            "            self.set_font(self.default_font, \"\", 8)\n"
+            "            _lines_ad = self.multi_cell(\n",
+            "Medicao altura DADOS ADICIONAIS: Times regular 8pt",
+        ),
+        # Patch 1-cont-a: continuacao nas areas de produtos com mesma tipografia
+        (
+            '                description="CONTINUAÇÃO DAS INFORMAÇÕES COMPLEMENTARES",\n'
+            "                content=additional_data,\n"
+            "                h=h,\n",
+            '                description="CONTINUAÇÃO DAS INFORMAÇÕES COMPLEMENTARES",\n'
+            "                content=additional_data,\n"
+            '                type="info_complementares",\n'
+            "                h=h,\n",
+            "Continuacao (produtos): tipografia info_complementares",
+        ),
+        # Patch 1-cont-b: continuacao em paginas seguintes com mesma tipografia
+        (
+            '                    description="CONTINUAÇÃO INFORMAÇÕES COMPLEMENTARES",\n'
+            "                    content=additional_data,\n"
+            "                ),\n",
+            '                    description="CONTINUAÇÃO INFORMAÇÕES COMPLEMENTARES",\n'
+            "                    content=additional_data,\n"
+            '                    type="info_complementares",\n'
+            "                ),\n",
+            "Continuacao (pag. seguintes): tipografia info_complementares",
         ),
         # Patch 2: fonte tabela de produtos
         (
@@ -269,17 +380,49 @@ def main():
             break
 
     # ------------------------------------------------------------------
-    # danfe_basic_field.py — conteudo em negrito
+    # danfe_basic_field.py — conteudo em negrito + info_complementares
     # ------------------------------------------------------------------
     basic_py = os.path.join(base, "danfe_basic_field.py")
 
+    # Novo bloco de selecao de fonte do conteudo:
+    # - info_complementares: Times regular 8pt (tipografia do modelo da empresa)
+    # - demais campos: negrito (como antes)
+    _CONT_NEW = (
+        '        elif self.type == "info_complementares":\n'
+        "            # Tipografia do modelo da empresa: Times regular 8pt\n"
+        '            pdf.set_font(pdf.default_font, "", 8)\n'
+        '            align = "L"\n'
+        "        else:\n"
+        '            pdf.set_font(pdf.default_font, "B", font_size_cont)\n'
+        '            align = "R" if self.type == "number" else "L"'
+    )
+
     patches_basic = [
+        # a partir do original (conteudo regular)
         (
-            'pdf.set_font(pdf.default_font, "", font_size_cont)\n'
+            "        else:\n"
+            '            pdf.set_font(pdf.default_font, "", font_size_cont)\n'
             '            align = "R" if self.type == "number" else "L"',
-            'pdf.set_font(pdf.default_font, "B", font_size_cont)\n'
+            _CONT_NEW,
+            "Conteudo: negrito + info_complementares regular 8pt (do original)",
+        ),
+        # a partir do estado ja patcheado (conteudo em negrito)
+        (
+            "        else:\n"
+            '            pdf.set_font(pdf.default_font, "B", font_size_cont)\n'
             '            align = "R" if self.type == "number" else "L"',
-            "Conteudo dos campos em negrito",
+            _CONT_NEW,
+            "Conteudo: info_complementares regular 8pt (do estado negrito)",
+        ),
+        # rotulo do campo info_complementares: 6pt (como o modelo)
+        (
+            "        # Description Cell\n"
+            '        pdf.set_font(pdf.default_font, "", font_size_desc)',
+            "        # Description Cell (info_complementares: rotulo 6pt como o modelo)\n"
+            '        if self.type == "info_complementares":\n'
+            "            font_size_desc = 6\n"
+            '        pdf.set_font(pdf.default_font, "", font_size_desc)',
+            "Rotulo info_complementares: 6pt",
         ),
     ]
 

@@ -1,5 +1,5 @@
 """
-Conversor de XML NF-e para DANFE PDF  —  v1.0.0
+Conversor de XML NF-e para DANFE PDF  —  v1.4.0
 ================================================
 Converte todos os arquivos XML de NF-e de uma pasta em DANFEs no formato PDF.
 Nome do PDF: AAAA-MM-DD_RAZAOSOCIAL(15)_NF_NroNFe_R$Valor.pdf
@@ -8,11 +8,14 @@ Dependencia:
     pip install brazilfiscalreport
 
 Uso:
-    python xml_para_danfe.py                  -> processa a pasta onde o script esta
-    python xml_para_danfe.py C:/caminho/xmls  -> processa a pasta indicada
+    python xml_para_danfe.py                  -> abre janelas para escolher a pasta
+                                                 dos XMLs e a pasta de saida dos PDFs
+    python xml_para_danfe.py C:/xmls          -> processa a pasta indicada
+                                                 (saida em C:/xmls/DANFE_PDF)
+    python xml_para_danfe.py C:/xmls C:/pdfs  -> entrada e saida indicadas
 """
 
-__version__ = "1.0.0"
+__version__ = "1.4.0"
 
 import sys
 import io
@@ -21,9 +24,38 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-# Garante saida UTF-8 sem erros mesmo em terminais antigos
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# Garante saida UTF-8 sem erros mesmo em terminais antigos e espelha
+# tudo o que aparece no terminal tambem para log_execucao.txt.
+class _Tee(io.TextIOBase):
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, s):
+        for st in self._streams:
+            try:
+                st.write(s)
+                st.flush()
+            except Exception:
+                pass
+        return len(s)
+
+    def flush(self):
+        for st in self._streams:
+            try:
+                st.flush()
+            except Exception:
+                pass
+
+
+_term_out = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+_term_err = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+try:
+    _log = open(Path(__file__).parent / "log_execucao.txt", "a", encoding="utf-8")
+except Exception:
+    _log = None
+
+sys.stdout = _Tee(_term_out, _log) if _log else _term_out
+sys.stderr = _Tee(_term_err, _log) if _log else _term_err
 
 NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
 NF_URI = "http://www.portalfiscal.inf.br/nfe"
@@ -171,7 +203,7 @@ def converter_xml_para_danfe(pasta_xml: Path, pasta_saida: Path):
         ),
     )
 
-    pasta_saida.mkdir(exist_ok=True)
+    pasta_saida.mkdir(parents=True, exist_ok=True)
 
     xmls = sorted(pasta_xml.glob("*.xml"))
     if not xmls:
@@ -206,17 +238,60 @@ def converter_xml_para_danfe(pasta_xml: Path, pasta_saida: Path):
     return sucesso, erro
 
 
+def escolher_pastas():
+    """Abre janelas para o usuario escolher a pasta dos XMLs e a de saida."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        # Fallback sem interface grafica: pergunta no terminal
+        pasta_xml = input("Pasta com os XMLs das NF-e: ").strip(' "')
+        pasta_saida = input("Pasta para salvar os DANFEs (PDF): ").strip(' "')
+        if not pasta_xml or not pasta_saida:
+            print("Pasta nao informada. Operacao cancelada.")
+            sys.exit(1)
+        return Path(pasta_xml), Path(pasta_saida)
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    pasta_xml = filedialog.askdirectory(
+        parent=root,
+        title="Selecione a pasta com os XMLs das NF-e a converter",
+    )
+    if not pasta_xml:
+        print("Nenhuma pasta de XMLs selecionada. Operacao cancelada.")
+        root.destroy()
+        sys.exit(1)
+
+    pasta_saida = filedialog.askdirectory(
+        parent=root,
+        title="Selecione a pasta onde salvar os DANFEs gerados (PDF)",
+        initialdir=pasta_xml,
+    )
+    if not pasta_saida:
+        print("Nenhuma pasta de saida selecionada. Operacao cancelada.")
+        root.destroy()
+        sys.exit(1)
+
+    root.destroy()
+    return Path(pasta_xml), Path(pasta_saida)
+
+
 def main():
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 2:
         pasta_xml = Path(sys.argv[1])
+        pasta_saida = Path(sys.argv[2])
+    elif len(sys.argv) > 1:
+        pasta_xml = Path(sys.argv[1])
+        pasta_saida = pasta_xml / "DANFE_PDF"
     else:
-        pasta_xml = Path(__file__).parent
+        pasta_xml, pasta_saida = escolher_pastas()
 
     if not pasta_xml.exists():
         print(f"Pasta nao encontrada: {pasta_xml}")
         sys.exit(1)
-
-    pasta_saida = pasta_xml / "DANFE_PDF"
 
     print("=" * 60)
     print("  Conversor XML NF-e -> DANFE PDF")

@@ -1,18 +1,24 @@
 @echo off
+chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 set LOG=%~dp0log_execucao.txt
-set DANFE_DIR=%~dp0DANFE_PDF
 
-echo Limpando PDFs anteriores... > "%LOG%"
-if exist "%DANFE_DIR%" rd /s /q "%DANFE_DIR%"
+echo Execucao iniciada em %date% %time% > "%LOG%"
 
-echo Instalando dependencia... >> "%LOG%"
-pip install brazilfiscalreport >> "%LOG%" 2>&1
-
-echo Corrigindo biblioteca (height DADOS ADICIONAIS)... >> "%LOG%"
-python -u "%~dp0patch_danfe_lib.py" >> "%LOG%" 2>&1
-
-echo Convertendo XMLs... >> "%LOG%"
-python -u "%~dp0xml_para_danfe.py" >> "%LOG%" 2>&1
-
-echo Concluido. >> "%LOG%"
+echo ============================================
+echo  Conversor XML NF-e para DANFE PDF
+echo ============================================
+echo.
+echo [1/3] Instalando/verificando dependencia...
+pip install brazilfiscalreport
+echo.
+echo [2/3] Corrigindo biblioteca (layout DANFE)...
+python -u "%~dp0patch_danfe_lib.py"
+echo.
+echo [3/3] Convertendo XMLs (selecione as pastas nas janelas)...
+python -u "%~dp0xml_para_danfe.py"
+echo.
+echo ============================================
+echo  Concluido. Log completo em log_execucao.txt
+echo ============================================
+pause
